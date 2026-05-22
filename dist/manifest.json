@@ -1,0 +1,33 @@
+{
+  "id": "emdash-plugin-brevo",
+  "version": "1.0.0",
+  "capabilities": [
+    "hooks.email-transport:register",
+    "network:request"
+  ],
+  "allowedHosts": ["api.brevo.com"],
+  "storage": {},
+  "hooks": [
+    {
+      "name": "plugin:install",
+      "priority": 100,
+      "timeout": 5000
+    },
+    {
+      "name": "email:deliver",
+      "priority": 100,
+      "timeout": 5000,
+      "exclusive": true
+    }
+  ],
+  "routes": ["admin"],
+  "admin": {
+    "pages": [
+      {
+        "path": "/brevo",
+        "label": "Brevo Email",
+        "icon": "mail"
+      }
+    ]
+  }
+}
