@@ -10,7 +10,6 @@ interface EmailMessage {
 interface AdminInteraction {
 	type: string;
 	action_id?: string;
-	page?: string;
 	values?: Record<string, string>;
 }
 
@@ -151,19 +150,6 @@ export default {
 										},
 									]),
 
-							// Section 3 — Get Brevo Account (affiliate signup — ready to activate)
-							// TODO: Uncomment and add your Brevo affiliate link when approved
-							// {
-							//   type: "section",
-							//   text: "Don't have a Brevo account?",
-							//   accessory: {
-							//     type: "button",
-							//     text: "Sign up free at Brevo",
-							//     url: "https://www.brevo.com/partners/affiliates/", // REPLACE with your affiliate link
-							//     action_id: "brevoSignup"
-							//   },
-							//   hint: "Affiliate link — we may earn a commission at no cost to you."
-							// },
 						],
 					};
 				}
