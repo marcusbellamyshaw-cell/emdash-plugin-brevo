@@ -62,6 +62,12 @@ Options passed to the factory function serve as fallback defaults. Values stored
 
 Sign up at [brevo.com](https://www.brevo.com). The free plan includes 300 emails/day — enough for most small sites.
 
+## About
+
+Brevo email transport plugin for EmDash CMS. Designed by Marcus Shaw for [Every Bit Texas](https://everybittexas.com). Coded by [Claude Code](https://claude.ai/code).
+
+Built for [EmDash CMS](https://github.com/emdash-cms/emdash) — star the repo to support open-source CMS development.
+
 ## License
 
 MIT
