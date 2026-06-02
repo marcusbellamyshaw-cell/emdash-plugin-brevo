@@ -1,0 +1,17 @@
+{
+	"$schema": "https://plugins.emdashcms.com/schemas/emdash-plugin.schema.json",
+
+	"slug": "emdash-plugin-brevo",
+	"publisher": "Marcus Bellamy-Shaw",
+
+	"license": "MIT",
+	"author": { "name": "Marcus Bellamy-Shaw" },
+	"description": "Brevo transactional email delivery for Emdash CMS. Implements the email:deliver hook via the Brevo HTTP API — compatible with Cloudflare Workers.",
+
+	"capabilities": ["hooks.email-transport:register", "network:request"],
+	"allowedHosts": ["api.brevo.com"],
+
+	"admin": {
+		"pages": [{ "path": "/brevo", "label": "Brevo Email", "icon": "mail" }]
+	}
+}
