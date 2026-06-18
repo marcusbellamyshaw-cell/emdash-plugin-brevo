@@ -33,7 +33,7 @@ await build({
 // before the host force-kills the hook.
 const manifest = {
 	id: "emdash-plugin-brevo",
-	version: "1.1.0",
+	version: "1.1.1",
 	capabilities: ["hooks.email-transport:register", "network:request"],
 	allowedHosts: ["api.brevo.com"],
 	storage: {},

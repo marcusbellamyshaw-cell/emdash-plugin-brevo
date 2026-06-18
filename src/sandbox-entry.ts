@@ -21,11 +21,16 @@ interface BrevoConfig {
 
 const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
 
-// Keep this below the 5s host hook timeout declared in manifest.json for
-// email:deliver, so the plugin can turn an abort into a clean, descriptive
-// error before the host kills the hook. (Previously this was 10s — longer than
-// the host timeout — which meant the host aborted first and this timeout, plus
-// its error message, was effectively dead code.)
+// Client-side timeout, kept below the 5s host hook timeout declared in
+// manifest.json for email:deliver so the plugin returns a clean, descriptive
+// error before the host force-kills the hook.
+//
+// This is implemented with Promise.race rather than an AbortController/
+// AbortSignal on purpose. In the sandbox, ctx.http is a remote RPC stub and the
+// fetch init is structured-cloned across the isolate boundary. Cloudflare
+// Workers cannot serialize an AbortSignal — passing `signal` threw
+// "DataCloneError: AbortSignal serialization is not enabled" before the request
+// was ever sent, which is exactly what broke the Send Test Email button.
 const REQUEST_TIMEOUT_MS = 4500;
 
 async function loadConfig(ctx: PluginContext): Promise<BrevoConfig> {
@@ -58,37 +63,49 @@ async function sendBrevoEmail(
 		);
 	}
 
-	const ctrl = new AbortController();
-	const tid = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`Brevo request timed out after ${REQUEST_TIMEOUT_MS}ms`)),
+			REQUEST_TIMEOUT_MS,
+		);
+	});
+
+	// Do NOT put an AbortSignal in this init — it is not cloneable across the
+	// sandbox's RPC boundary (see REQUEST_TIMEOUT_MS note above). The timer above
+	// enforces the timeout instead; if it wins, the host hook timeout reaps the
+	// still-pending request.
+	const request = ctx.http.fetch(BREVO_ENDPOINT, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"api-key": cfg.apiKey,
+		},
+		body: JSON.stringify({
+			sender: { email: cfg.fromEmail, name: cfg.fromName },
+			to: [{ email: message.to }],
+			subject: message.subject,
+			textContent: message.text,
+			htmlContent: message.html,
+		}),
+	});
+	// If the timeout wins the race, `request` stays pending; swallow its eventual
+	// settlement so it can never surface as an unhandled rejection.
+	void request.then(
+		() => {},
+		() => {},
+	);
+
 	try {
-		const res = await ctx.http.fetch(BREVO_ENDPOINT, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"api-key": cfg.apiKey,
-			},
-			body: JSON.stringify({
-				sender: { email: cfg.fromEmail, name: cfg.fromName },
-				to: [{ email: message.to }],
-				subject: message.subject,
-				textContent: message.text,
-				htmlContent: message.html,
-			}),
-			signal: ctrl.signal,
-		});
+		const res = await Promise.race([request, timeout]);
 
 		if (!res.ok) {
 			const body = await res.text();
 			ctx.log.error(`[emdash-plugin-brevo] Brevo API error ${res.status}: ${body}`);
 			throw new Error(`Brevo ${res.status}: ${body}`);
 		}
-	} catch (err) {
-		if (err instanceof Error && err.name === "AbortError") {
-			throw new Error(`Brevo request timed out after ${REQUEST_TIMEOUT_MS}ms`);
-		}
-		throw err;
 	} finally {
-		clearTimeout(tid);
+		clearTimeout(timer);
 	}
 }
 

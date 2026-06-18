@@ -18,7 +18,7 @@ export interface BrevoPluginOptions {
 export function brevoPlugin(options: BrevoPluginOptions = {}): PluginDescriptor<BrevoPluginOptions> {
 	return {
 		id: "emdash-plugin-brevo",
-		version: "1.1.0",
+		version: "1.1.1",
 		format: "standard",
 		entrypoint: "emdash-plugin-brevo/sandbox",
 		capabilities: ["hooks.email-transport:register", "network:request"],
