@@ -1,6 +1,6 @@
 {
 	"name": "emdash-plugin-brevo",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Brevo transactional email provider for Emdash CMS. Implements the email:deliver hook via Brevo HTTP API — compatible with Cloudflare Workers.",
 	"type": "module",
 	"main": "./dist/index.mjs",
@@ -9,6 +9,12 @@
 		".": "./dist/index.mjs",
 		"./sandbox": "./dist/sandbox-entry.mjs",
 		"./manifest": "./dist/manifest.json"
+	},
+	"files": ["dist"],
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"build": "node build.mjs",
+		"prepublishOnly": "npm run typecheck && npm run build"
 	},
 	"keywords": [
 		"emdash",
@@ -33,6 +39,8 @@
 		"emdash": ">=0.12.0"
 	},
 	"devDependencies": {
-		"emdash": "latest"
+		"emdash": "latest",
+		"esbuild": "^0.24.0",
+		"typescript": "^5.6.0"
 	}
 }

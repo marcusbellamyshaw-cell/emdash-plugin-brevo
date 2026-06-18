@@ -34,29 +34,32 @@ export default defineConfig({
 
 ## Configuration
 
-### Method 1 — Admin UI (recommended)
+### Admin UI (the only supported method)
 
 After installing and deploying, go to **Settings > Brevo Email** in your EmDash admin. Enter your Brevo API key, sender email, and display name, then click **Save Configuration**.
 
-### Method 2 — Pass options directly (useful for local dev)
+Configuration is stored in the plugin's KV settings and can be changed any time without a redeploy. Leaving the API-key field blank when you save keeps the previously stored key (the field is never pre-filled with your secret), so you can edit the sender details without re-entering the key.
 
-```typescript
-sandboxed: [
-  brevoPlugin({
-    apiKey: "your-brevo-api-key",
-    fromEmail: "noreply@yourdomain.com",
-    fromName: "Your Site Name",
-  }),
-]
-```
-
-Options passed to the factory function serve as fallback defaults. Values stored via the admin UI take precedence.
+> **Why not constructor options?** Earlier versions documented a `brevoPlugin({ apiKey, fromEmail, fromName })` form. This plugin runs **sandboxed** (`format: "standard"`), and Emdash does not pass descriptor `options` into the sandbox at runtime — so those values never reached the email hook. The factory still accepts the arguments for source-compatibility, but they are ignored. Configure everything through the admin UI.
 
 ## Brevo setup tips
 
-- **API key:** Go to Brevo > Settings > SMTP & API > API Keys and generate a key. Both `xkeysib-` and `xsmtpsib-` key formats work.
+- **API key:** Go to Brevo > Settings > SMTP & API > **API Keys** and generate a key. Use the **API key** (starts with `xkeysib-`). Do **not** use an SMTP key (`xsmtpsib-`) — see [About SMTP](#about-smtp) below.
 - **IP restrictions:** Cloudflare Workers use dynamic egress IPs. If your Brevo API key has IP restrictions enabled, disable them or the requests will be silently rejected.
 - **Sender verification:** Make sure your sender domain is verified under Brevo > Senders, Domains, IPs. Unverified senders are rejected at the API level.
+
+## About SMTP
+
+A common question: *"Can this plugin send over SMTP (e.g. `smtp-relay.brevo.com:587`) instead of the HTTP API?"*
+
+**No — and no Emdash sandboxed plugin can.** SMTP is a raw TCP protocol. Sandboxed plugins are given exactly one network primitive — `ctx.http.fetch()`, which speaks HTTP/HTTPS only and is restricted to the hosts in `allowedHosts`. There is no TCP/socket capability in the plugin sandbox, so a plugin physically cannot open an SMTP connection.
+
+The good news: you don't need SMTP. Brevo's **HTTP transactional API** (`POST https://api.brevo.com/v3/smtp/email`, which this plugin uses) sends the same mail through the same Brevo infrastructure. It is the correct, sandbox-compatible way to send email from Emdash on Cloudflare Workers.
+
+Practical consequences:
+
+- Authenticate with a Brevo **API key** (`xkeysib-`), **not** an SMTP key (`xsmtpsib-`). SMTP keys only authenticate the SMTP relay, which can't be reached from the sandbox. The admin form will flag an `xsmtpsib-` key and tell you to use an API key.
+- If you specifically need to talk to an arbitrary third-party SMTP server (not Brevo), that also isn't possible from a plugin. It would require either an HTTP→SMTP gateway service, or an SMTP transport built into Emdash core itself (Cloudflare Workers can open TCP sockets via `connect()`, but only the host can, not a sandboxed plugin).
 
 ## Getting a Brevo account
 

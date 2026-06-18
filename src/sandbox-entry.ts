@@ -13,6 +13,85 @@ interface AdminInteraction {
 	values?: Record<string, string>;
 }
 
+interface BrevoConfig {
+	apiKey: string;
+	fromEmail: string;
+	fromName: string;
+}
+
+const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
+
+// Keep this below the 5s host hook timeout declared in manifest.json for
+// email:deliver, so the plugin can turn an abort into a clean, descriptive
+// error before the host kills the hook. (Previously this was 10s — longer than
+// the host timeout — which meant the host aborted first and this timeout, plus
+// its error message, was effectively dead code.)
+const REQUEST_TIMEOUT_MS = 4500;
+
+async function loadConfig(ctx: PluginContext): Promise<BrevoConfig> {
+	return {
+		apiKey: (await ctx.kv.get<string>("config:apiKey")) ?? "",
+		fromEmail: (await ctx.kv.get<string>("config:fromEmail")) ?? "",
+		fromName: (await ctx.kv.get<string>("config:fromName")) ?? "",
+	};
+}
+
+/**
+ * Send one email through Brevo's HTTP transactional API.
+ *
+ * Shared by the email:deliver hook and the admin "Send Test Email" action so
+ * the request shape, timeout, and error normalization can never drift between
+ * the two paths. Throws an Error with a human-readable message on any failure
+ * (missing key, missing http capability, timeout, or a non-2xx Brevo response).
+ */
+async function sendBrevoEmail(
+	ctx: PluginContext,
+	cfg: BrevoConfig,
+	message: EmailMessage,
+): Promise<void> {
+	if (!cfg.apiKey) {
+		throw new Error("Brevo API key is not configured. Set it in Settings > Brevo Email.");
+	}
+	if (!ctx.http) {
+		throw new Error(
+			"[emdash-plugin-brevo] ctx.http is not available. Verify the plugin has the 'network:request' capability.",
+		);
+	}
+
+	const ctrl = new AbortController();
+	const tid = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+	try {
+		const res = await ctx.http.fetch(BREVO_ENDPOINT, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"api-key": cfg.apiKey,
+			},
+			body: JSON.stringify({
+				sender: { email: cfg.fromEmail, name: cfg.fromName },
+				to: [{ email: message.to }],
+				subject: message.subject,
+				textContent: message.text,
+				htmlContent: message.html,
+			}),
+			signal: ctrl.signal,
+		});
+
+		if (!res.ok) {
+			const body = await res.text();
+			ctx.log.error(`[emdash-plugin-brevo] Brevo API error ${res.status}: ${body}`);
+			throw new Error(`Brevo ${res.status}: ${body}`);
+		}
+	} catch (err) {
+		if (err instanceof Error && err.name === "AbortError") {
+			throw new Error(`Brevo request timed out after ${REQUEST_TIMEOUT_MS}ms`);
+		}
+		throw err;
+	} finally {
+		clearTimeout(tid);
+	}
+}
+
 export default {
 	hooks: {
 		"plugin:install": {
@@ -23,7 +102,9 @@ export default {
 					await ctx.kv.set("config:fromEmail", "");
 					await ctx.kv.set("config:fromName", "");
 				}
-				ctx.log.info("[emdash-plugin-brevo] Installed. Configure Brevo API key in Settings > Brevo Email.");
+				ctx.log.info(
+					"[emdash-plugin-brevo] Installed. Configure your Brevo API key in Settings > Brevo Email.",
+				);
 			},
 		},
 
@@ -31,49 +112,8 @@ export default {
 			exclusive: true,
 			handler: async (event: unknown, ctx: PluginContext) => {
 				const { message } = event as { message: EmailMessage; source: string };
-
-				const pluginOptions = (ctx.plugin as unknown as { options?: { apiKey?: string; fromEmail?: string; fromName?: string } }).options;
-
-				const apiKey =
-					(await ctx.kv.get<string>("config:apiKey")) || pluginOptions?.apiKey || "";
-				const fromEmail =
-					(await ctx.kv.get<string>("config:fromEmail")) || pluginOptions?.fromEmail || "";
-				const fromName =
-					(await ctx.kv.get<string>("config:fromName")) || pluginOptions?.fromName || "";
-
-				if (!apiKey) {
-					throw new Error("Brevo API key is not configured. Set it in Settings > Brevo Email.");
-				}
-
-				if (!ctx.http) {
-					throw new Error("[emdash-plugin-brevo] ctx.http is not available. Verify the plugin has the 'network:request' capability.");
-				}
-				// 10-second timeout — prevents a stalled Brevo API from holding
-				// the email:deliver hook open indefinitely.
-				const deliverCtrl = new AbortController();
-				const deliverTid = setTimeout(() => deliverCtrl.abort(), 10_000);
-				const res = await ctx.http.fetch("https://api.brevo.com/v3/smtp/email", {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						"api-key": apiKey,
-					},
-					body: JSON.stringify({
-						sender: { email: fromEmail, name: fromName },
-						to: [{ email: message.to }],
-						subject: message.subject,
-						textContent: message.text,
-						htmlContent: message.html,
-					}),
-					signal: deliverCtrl.signal,
-				}).finally(() => clearTimeout(deliverTid));
-
-				if (!res.ok) {
-					const body = await res.text();
-					ctx.log.error(`[emdash-plugin-brevo] Delivery failed ${res.status}: ${body}`);
-					throw new Error(`Brevo ${res.status}: ${body}`);
-				}
-
+				const cfg = await loadConfig(ctx);
+				await sendBrevoEmail(ctx, cfg, message);
 				ctx.log.info(`[emdash-plugin-brevo] Email delivered to ${message.to}`);
 			},
 		},
@@ -86,9 +126,7 @@ export default {
 
 				// ── Page load ──────────────────────────────────────────────────────────
 				if (interaction.type === "page_load") {
-					const apiKey = await ctx.kv.get<string>("config:apiKey");
-					const fromEmail = await ctx.kv.get<string>("config:fromEmail");
-					const fromName = await ctx.kv.get<string>("config:fromName");
+					const { apiKey, fromEmail, fromName } = await loadConfig(ctx);
 					const isConfigured = !!(apiKey && fromEmail);
 
 					return {
@@ -103,8 +141,13 @@ export default {
 										type: "secret_input",
 										action_id: "apiKey",
 										label: "Brevo API Key",
-										placeholder: "xkeysib-...",
-										initial_value: apiKey ?? "",
+										// Never echo the stored secret back to the browser. When a
+										// key is already saved, the placeholder tells the operator
+										// that leaving this blank keeps the current key.
+										placeholder: isConfigured
+											? "•••••••• saved — leave blank to keep current key"
+											: "xkeysib-...",
+										initial_value: "",
 									},
 									{
 										type: "text_input",
@@ -149,7 +192,6 @@ export default {
 											variant: "alert",
 										},
 									]),
-
 						],
 					};
 				}
@@ -161,21 +203,34 @@ export default {
 					const newFromEmail = (values["fromEmail"] ?? "").trim();
 					const newFromName = (values["fromName"] ?? "").trim();
 
-					if (newApiKey && !newApiKey.startsWith("xkeysib-")) {
+					// Catch the most common mistake explicitly: pasting a Brevo *SMTP*
+					// key (xsmtpsib-). This plugin sends over Brevo's HTTP API, which
+					// authenticates with an *API* key (xkeysib-). SMTP keys only work
+					// with Brevo's SMTP relay (smtp-relay.brevo.com over TCP), which a
+					// sandboxed Emdash plugin cannot reach. Other formats (e.g. future
+					// or sub-account keys) are accepted and validated live via the
+					// Send Test Email button rather than blocked here.
+					if (newApiKey.startsWith("xsmtpsib-")) {
 						return {
 							blocks: [
 								{
 									type: "banner",
-									title: "Invalid API key format",
+									title: "That looks like a Brevo SMTP key",
 									description:
-										"Brevo API keys start with xkeysib-. Please check your key in the Brevo dashboard.",
+										"This plugin sends through Brevo's HTTP API, which needs an API key that starts with xkeysib- (Brevo > SMTP & API > API Keys). SMTP keys (xsmtpsib-) only work with Brevo's SMTP relay, which Emdash plugins can't use.",
 									variant: "alert",
 								},
 							],
 						};
 					}
 
-					await ctx.kv.set("config:apiKey", newApiKey);
+					// Only overwrite the stored API key when a new value was actually
+					// entered. The secret field is never pre-filled (see page_load), so a
+					// blank submission means "keep the current key" — without this guard,
+					// editing only the sender fields would silently wipe the saved key.
+					if (newApiKey) {
+						await ctx.kv.set("config:apiKey", newApiKey);
+					}
 					await ctx.kv.set("config:fromEmail", newFromEmail);
 					await ctx.kv.set("config:fromName", newFromName);
 
@@ -196,11 +251,9 @@ export default {
 
 				// ── Send test email ────────────────────────────────────────────────────
 				if (interaction.action_id === "sendTest") {
-					const apiKey = await ctx.kv.get<string>("config:apiKey");
-					const fromEmail = await ctx.kv.get<string>("config:fromEmail");
-					const fromName = await ctx.kv.get<string>("config:fromName");
+					const cfg = await loadConfig(ctx);
 
-					if (!apiKey || !fromEmail) {
+					if (!cfg.apiKey || !cfg.fromEmail) {
 						return {
 							blocks: [
 								{
@@ -214,46 +267,19 @@ export default {
 					}
 
 					try {
-						const testCtrl = new AbortController();
-						const testTid = setTimeout(() => testCtrl.abort(), 10_000);
-						const res = await ctx.http!.fetch("https://api.brevo.com/v3/smtp/email", {
-							method: "POST",
-							headers: {
-								"Content-Type": "application/json",
-								"api-key": apiKey,
-							},
-							body: JSON.stringify({
-								sender: { email: fromEmail, name: fromName },
-								to: [{ email: fromEmail }],
-								subject: "Brevo test email from EmDash",
-								textContent:
-									"This is a test email sent from your EmDash site to verify Brevo email delivery is working.",
-							}),
-							signal: testCtrl.signal,
-						}).finally(() => clearTimeout(testTid));
+						await sendBrevoEmail(ctx, cfg, {
+							to: cfg.fromEmail,
+							subject: "Brevo test email from EmDash",
+							text: "This is a test email sent from your EmDash site to verify Brevo email delivery is working.",
+						});
 
-						if (!res.ok) {
-							const body = await res.text();
-							ctx.log.error(`[emdash-plugin-brevo] Test email failed ${res.status}: ${body}`);
-							return {
-								blocks: [
-									{
-										type: "banner",
-										title: "Test failed",
-										description: `Brevo returned ${res.status}: ${body}`,
-										variant: "error",
-									},
-								],
-							};
-						}
-
-						ctx.log.info(`[emdash-plugin-brevo] Test email sent to ${fromEmail}`);
+						ctx.log.info(`[emdash-plugin-brevo] Test email sent to ${cfg.fromEmail}`);
 						return {
 							blocks: [
 								{
 									type: "banner",
 									title: "Test email sent",
-									description: `A test email has been sent to ${fromEmail}.`,
+									description: `A test email has been sent to ${cfg.fromEmail}.`,
 									variant: "default",
 								},
 							],
