@@ -18,12 +18,17 @@ export interface BrevoPluginOptions {
 export function brevoPlugin(options: BrevoPluginOptions = {}): PluginDescriptor<BrevoPluginOptions> {
 	return {
 		id: "emdash-plugin-brevo",
-		version: "1.2.0",
+		version: "1.3.0",
 		format: "standard",
 		entrypoint: "emdash-plugin-brevo/sandbox",
 		capabilities: ["hooks.email-transport:register", "network:request"],
 		allowedHosts: ["api.brevo.com"],
 		adminPages: [{ path: "/brevo", label: "Brevo Email", icon: "mail" }],
+		settingsSchema: {
+			apiKey: { type: "secret", label: "Brevo API Key" },
+			fromEmail: { type: "email", label: "From Email Address" },
+			fromName: { type: "string", label: "From Name" },
+		},
 		options,
 	};
 }

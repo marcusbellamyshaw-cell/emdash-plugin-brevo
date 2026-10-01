@@ -12,6 +12,11 @@
 	"allowedHosts": ["api.brevo.com"],
 
 	"admin": {
-		"pages": [{ "path": "/brevo", "label": "Brevo Email", "icon": "mail" }]
+		"pages": [{ "path": "/brevo", "label": "Brevo Email", "icon": "mail" }],
+		"settingsSchema": {
+			"apiKey": { "type": "secret", "label": "Brevo API Key" },
+			"fromEmail": { "type": "email", "label": "From Email Address" },
+			"fromName": { "type": "string", "label": "From Name" }
+		}
 	}
 }

@@ -37,11 +37,27 @@ const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
 // was ever sent, which is exactly what broke the Send Test Email button.
 const REQUEST_TIMEOUT_MS = 4500;
 
+// Config lives in ctx.settings so the API key is encrypted at rest (it is declared
+// `type: "secret"` in the settingsSchema; needs EMDASH_ENCRYPTION_KEY). Versions
+// before 1.3.0 kept plaintext `config:*` KV keys: move any that remain into
+// settings on first read, then drop the plaintext copy.
+async function readSetting(ctx: PluginContext, key: string, legacyKey: string): Promise<string> {
+	const current = await ctx.settings.get<string>(key);
+	if (current !== null && current !== undefined) return current;
+	const legacy = await ctx.kv.get<string>(legacyKey);
+	if (legacy) {
+		await ctx.settings.set(key, legacy);
+		await ctx.kv.delete(legacyKey);
+		return legacy;
+	}
+	return "";
+}
+
 async function loadConfig(ctx: PluginContext): Promise<BrevoConfig> {
 	return {
-		apiKey: (await ctx.kv.get<string>("config:apiKey")) ?? "",
-		fromEmail: (await ctx.kv.get<string>("config:fromEmail")) ?? "",
-		fromName: (await ctx.kv.get<string>("config:fromName")) ?? "",
+		apiKey: await readSetting(ctx, "apiKey", "config:apiKey"),
+		fromEmail: await readSetting(ctx, "fromEmail", "config:fromEmail"),
+		fromName: await readSetting(ctx, "fromName", "config:fromName"),
 	};
 }
 
@@ -119,11 +135,11 @@ export default {
 	hooks: {
 		"plugin:install": {
 			handler: async (_event: unknown, ctx: PluginContext) => {
-				const existing = await ctx.kv.get<string>("config:apiKey");
+				const existing = await ctx.settings.get<string>("apiKey");
 				if (existing === null || existing === undefined) {
-					await ctx.kv.set("config:apiKey", "");
-					await ctx.kv.set("config:fromEmail", "");
-					await ctx.kv.set("config:fromName", "");
+					await ctx.settings.set("apiKey", "");
+					await ctx.settings.set("fromEmail", "");
+					await ctx.settings.set("fromName", "");
 				}
 				ctx.log.info(
 					"[emdash-plugin-brevo] Installed. Configure your Brevo API key in Settings > Brevo Email.",
@@ -252,10 +268,10 @@ export default {
 					// blank submission means "keep the current key" — without this guard,
 					// editing only the sender fields would silently wipe the saved key.
 					if (newApiKey) {
-						await ctx.kv.set("config:apiKey", newApiKey);
+						await ctx.settings.set("apiKey", newApiKey);
 					}
-					await ctx.kv.set("config:fromEmail", newFromEmail);
-					await ctx.kv.set("config:fromName", newFromName);
+					await ctx.settings.set("fromEmail", newFromEmail);
+					await ctx.settings.set("fromName", newFromName);
 
 					ctx.log.info("[emdash-plugin-brevo] Configuration saved");
 

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import plugin from "../src/sandbox-entry.js";
 
-function makeCtx(overrides: { kvSeed?: Record<string, unknown>; fetchImpl?: typeof fetch } = {}) {
+function makeCtx(overrides: { kvSeed?: Record<string, unknown>; settingsSeed?: Record<string, unknown>; fetchImpl?: typeof fetch } = {}) {
 	const store = new Map<string, unknown>(Object.entries(overrides.kvSeed ?? {}));
+	const settingsStore = new Map<string, unknown>(Object.entries(overrides.settingsSeed ?? {}));
 	const fetchImpl = overrides.fetchImpl ?? vi.fn();
 	return {
 		kv: {
@@ -10,7 +11,15 @@ function makeCtx(overrides: { kvSeed?: Record<string, unknown>; fetchImpl?: type
 			set: vi.fn(async (key: string, value: unknown) => {
 				store.set(key, value);
 			}),
+			delete: vi.fn(async (key: string) => store.delete(key)),
 		},
+		settings: {
+			get: vi.fn(async (key: string) => (settingsStore.has(key) ? settingsStore.get(key) : null)),
+			set: vi.fn(async (key: string, value: unknown) => {
+				settingsStore.set(key, value);
+			}),
+		},
+		settingsStore,
 		http: { fetch: fetchImpl },
 		log: { info: vi.fn(), error: vi.fn() },
 		store,
@@ -19,10 +28,10 @@ function makeCtx(overrides: { kvSeed?: Record<string, unknown>; fetchImpl?: type
 
 function configuredCtx(fetchImpl?: typeof fetch) {
 	return makeCtx({
-		kvSeed: {
-			"config:apiKey": "xkeysib-real-key",
-			"config:fromEmail": "sender@example.com",
-			"config:fromName": "Example Site",
+		settingsSeed: {
+			apiKey: "xkeysib-real-key",
+			fromEmail: "sender@example.com",
+			fromName: "Example Site",
 		},
 		fetchImpl,
 	});
@@ -33,16 +42,31 @@ describe("plugin:install hook", () => {
 		const ctx = makeCtx();
 		await plugin.hooks["plugin:install"].handler(undefined, ctx as never);
 
-		expect(ctx.kv.set).toHaveBeenCalledWith("config:apiKey", "");
-		expect(ctx.kv.set).toHaveBeenCalledWith("config:fromEmail", "");
-		expect(ctx.kv.set).toHaveBeenCalledWith("config:fromName", "");
+		expect(ctx.settings.set).toHaveBeenCalledWith("apiKey", "");
+		expect(ctx.settings.set).toHaveBeenCalledWith("fromEmail", "");
+		expect(ctx.settings.set).toHaveBeenCalledWith("fromName", "");
 	});
 
 	it("does not overwrite existing config on reinstall", async () => {
 		const ctx = configuredCtx();
 		await plugin.hooks["plugin:install"].handler(undefined, ctx as never);
 
-		expect(ctx.kv.set).not.toHaveBeenCalled();
+		expect(ctx.settings.set).not.toHaveBeenCalled();
+	});
+});
+
+describe("legacy config migration", () => {
+	it("moves plaintext config:* KV values into settings once and deletes the plaintext copy", async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
+		const ctx = makeCtx({
+			kvSeed: { "config:apiKey": "xkeysib-old", "config:fromEmail": "old@example.com", "config:fromName": "Old" },
+			fetchImpl,
+		});
+		await plugin.hooks["email:deliver"].handler({ message: { to: "r@example.com", subject: "Hi", text: "B" }, source: "t" }, ctx as never);
+		expect(ctx.settingsStore.get("apiKey")).toBe("xkeysib-old");
+		expect(ctx.settingsStore.get("fromEmail")).toBe("old@example.com");
+		expect(ctx.store.has("config:apiKey")).toBe(false);
+		expect(JSON.parse(fetchImpl.mock.calls[0][1].body).sender).toEqual({ email: "old@example.com", name: "Old" });
 	});
 });
 
@@ -155,7 +179,7 @@ describe("admin route — saveConfig", () => {
 			ctx as never,
 		);
 
-		expect(ctx.kv.set).not.toHaveBeenCalledWith("config:apiKey", expect.anything());
+		expect(ctx.settings.set).not.toHaveBeenCalledWith("apiKey", expect.anything());
 		expect(result.blocks[0].title).toBe("That looks like a Brevo SMTP key");
 	});
 
@@ -166,7 +190,7 @@ describe("admin route — saveConfig", () => {
 			ctx as never,
 		);
 
-		expect(ctx.kv.set).toHaveBeenCalledWith("config:apiKey", "xkeysib-new");
+		expect(ctx.settings.set).toHaveBeenCalledWith("apiKey", "xkeysib-new");
 	});
 
 	it("keeps the existing API key when the field is left blank", async () => {
@@ -176,8 +200,8 @@ describe("admin route — saveConfig", () => {
 			ctx as never,
 		);
 
-		expect(ctx.kv.set).not.toHaveBeenCalledWith("config:apiKey", expect.anything());
-		expect(ctx.kv.set).toHaveBeenCalledWith("config:fromEmail", "new@b.com");
+		expect(ctx.settings.set).not.toHaveBeenCalledWith("apiKey", expect.anything());
+		expect(ctx.settings.set).toHaveBeenCalledWith("fromEmail", "new@b.com");
 	});
 });
 
