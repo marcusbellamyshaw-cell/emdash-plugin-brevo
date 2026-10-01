@@ -33,7 +33,7 @@ await build({
 // before the host force-kills the hook.
 const manifest = {
 	id: "emdash-plugin-brevo",
-	version: "1.1.1",
+	version: "1.3.0",
 	capabilities: ["hooks.email-transport:register", "network:request"],
 	allowedHosts: ["api.brevo.com"],
 	storage: {},
@@ -44,6 +44,11 @@ const manifest = {
 	routes: ["admin"],
 	admin: {
 		pages: [{ path: "/brevo", label: "Brevo Email", icon: "mail" }],
+		settingsSchema: {
+			apiKey: { type: "secret", label: "Brevo API Key" },
+			fromEmail: { type: "email", label: "From Email Address" },
+			fromName: { type: "string", label: "From Name" },
+		},
 	},
 };
 
