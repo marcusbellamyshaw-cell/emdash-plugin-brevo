@@ -70,6 +70,27 @@ describe("email:deliver hook", () => {
 		expect(body.textContent).toBe("Body");
 	});
 
+	it("forwards cc and replyTo to Brevo and omits them when absent", async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
+		const ctx = configuredCtx(fetchImpl);
+
+		await plugin.hooks["email:deliver"].handler(
+			{ message: { to: "a@example.com", cc: ["b@example.com", "c@example.com"], replyTo: "visitor@example.com", subject: "Hi", text: "Body" }, source: "test" },
+			ctx as never,
+		);
+		await plugin.hooks["email:deliver"].handler(
+			{ message: { to: "a@example.com", subject: "Plain", text: "Body" }, source: "test" },
+			ctx as never,
+		);
+
+		const withExtras = JSON.parse(fetchImpl.mock.calls[0][1].body);
+		expect(withExtras.cc).toEqual([{ email: "b@example.com" }, { email: "c@example.com" }]);
+		expect(withExtras.replyTo).toEqual({ email: "visitor@example.com" });
+		const plain = JSON.parse(fetchImpl.mock.calls[1][1].body);
+		expect(plain).not.toHaveProperty("cc");
+		expect(plain).not.toHaveProperty("replyTo");
+	});
+
 	it("throws when no API key is configured", async () => {
 		const ctx = makeCtx();
 

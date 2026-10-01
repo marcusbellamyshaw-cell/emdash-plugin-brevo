@@ -2,6 +2,10 @@ import type { PluginContext, SandboxedPlugin } from "emdash/plugin";
 
 interface EmailMessage {
 	to: string;
+	/** Additional visible recipients (core passes these since 0.40). */
+	cc?: string[];
+	/** Address replies go to instead of the sender. */
+	replyTo?: string;
 	subject: string;
 	text?: string;
 	html?: string;
@@ -84,6 +88,8 @@ async function sendBrevoEmail(
 		body: JSON.stringify({
 			sender: { email: cfg.fromEmail, name: cfg.fromName },
 			to: [{ email: message.to }],
+			...(message.cc?.length ? { cc: message.cc.map((email) => ({ email })) } : {}),
+			...(message.replyTo ? { replyTo: { email: message.replyTo } } : {}),
 			subject: message.subject,
 			textContent: message.text,
 			htmlContent: message.html,
